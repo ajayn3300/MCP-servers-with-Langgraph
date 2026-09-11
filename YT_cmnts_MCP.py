@@ -7,10 +7,10 @@ mcp = FastMCP('YT_CMNTS')
 
 @mcp.tool()
 def yt_cmnt_downloader(link: str) -> list:
-    '''this function takes youtube link as an argument and return a list including maximum 200 comments on that video'''
+    '''this function takes youtube link as an argument and return a list including maximum 250 comments on that video'''
     downloader = YoutubeCommentDownloader()
     comments = downloader.get_comments_from_url(link)
-    comments = [comment['text'] for comment in islice(comments, 200)]
+    comments = [comment['text'] for comment in islice(comments, 250)]
     return comments
 
 

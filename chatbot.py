@@ -19,7 +19,10 @@ llm  = ChatGroq(model="openai/gpt-oss-20b")
 # intializing client
 client = MultiServerMCPClient({
     'STOCKS' : {'transport':'stdio', 'command':'C:/Users/ajayn/AppData/Local/Programs/Python/Python311/python.exe', 'args':['D:/WORK/MCP/stock_MCP.py']},
-    'YT_CMNTS' : {'transport':'stdio', 'command':'C:/Users/ajayn/AppData/Local/Programs/Python/Python311/python.exe', 'args':['D:/WORK/MCP/YT_cmnts_MCP.py']}})
+
+    'YT_CMNTS' : {'transport':'stdio', 'command':'C:/Users/ajayn/AppData/Local/Programs/Python/Python311/python.exe', 'args':['D:/WORK/MCP/YT_cmnts_MCP.py']},
+
+    'GITHUB' : {'transport':'stdio', 'command':'C:/Users/ajayn/AppData/Local/Programs/Python/Python311/python.exe', 'args':['D:/WORK/MCP/github_MCP.py']}})
 
 # modifying the build_graph function
 async def build_graph():
@@ -51,7 +54,7 @@ async def main():
     chatbot = await build_graph()
 
     #invoke chatbot
-    res = await chatbot.ainvoke({'messages':HumanMessage('this is the youtube video link of a product, tell me all the goods and bads about this product,  what peoples are saying by reading the comments on this video link : https://www.youtube.com/watch?v=h3M9phIriT4 ')})
+    res = await chatbot.ainvoke({'messages':HumanMessage("create a detailed read_me.md for my github repo by reading and deeply analysing all the content from the repo for example what the code is doing ,what libararies are used , purpose of code , method used etc and give me in the format so that i can directly paste into github read_me.md file and it auto formats ##NOTE: Don't include code on md file.\n\nGithub repo link :{https://github.com/ajayn3300/MCP-servers-with-Langgraph}")})
 
     print(res['messages'][-1].content)
 
