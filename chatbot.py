@@ -3,6 +3,7 @@ load_dotenv()
 import yfinance as yf
 
 from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.checkpoint.memory import MemorySaver
 from typing import TypedDict, List, Literal
@@ -14,7 +15,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
 #model
-llm  = ChatGroq(model="openai/gpt-oss-20b")
+# llm  = ChatGroq(model="openai/gpt-oss-120b")
+llm = ChatGoogleGenerativeAI(model = 'gemini-3.8-flash')
+
 
 # intializing client
 client = MultiServerMCPClient({
@@ -54,7 +57,7 @@ async def main():
     chatbot = await build_graph()
 
     #invoke chatbot
-    res = await chatbot.ainvoke({'messages':HumanMessage("create a detailed read_me.md for my github repo by reading and deeply analysing all the content from the repo for example what the code is doing ,what libararies are used , purpose of code , method used etc and give me in the format so that i can directly paste into github read_me.md file and it auto formats ##NOTE: Don't include code on md file.\n\nGithub repo link :{https://github.com/ajayn3300/MCP-servers-with-Langgraph}")})
+    res = await chatbot.ainvoke({'messages':HumanMessage("create a detailed read_me.md for my github repo by reading and deeply analysing all the content from the repo for example what the code is doing ,what libraries are used , purpose of code , method used etc and give me in the format so that i can directly paste into github read_me.md file and it auto formats.\n\nGithub repo link :https://github.com/ajayn3300/Advanced-Self-RAG-System")})
 
     print(res['messages'][-1].content)
 
