@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP('GITHUB')
 
 @mcp.tool()
-def extract_content(repo_link :str) ->dict:
+def get_git_repo(repo_link :str) ->dict:
 
     '''this function takes github repository link as an argument and return all the python releated content with their file names as a dictionery'''
     link = repo_link.replace("https://github.com/",'')
@@ -32,6 +32,7 @@ def extract_content(repo_link :str) ->dict:
 
 if __name__ == "__main__":
     # Runs the server using standard input/output (stdio)
-    mcp.run(transport="stdio")
+    # mcp.run(transport="stdio")  #for local
+    mcp.run(transport="http", host="0.0.0.0", port=8000) # remote
 
 
