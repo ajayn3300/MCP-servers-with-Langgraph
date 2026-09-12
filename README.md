@@ -1,433 +1,253 @@
-# MCP‑Servers with LangGraph  
-*A lightweight demo of multi‑tool integration using LangGraph and MCP (Multi‑Chain Protocol)*  
-
----
-
-## 📦 Overview
-
-This repository demonstrates how to expose **Python functions as tools** via MCP servers and orchestrate them with **LangGraph** and a **Groq LLM**.  
-Three main components:
-
-| Component | Purpose | Key Files |
-|-----------|---------|-----------|
-| **STOCKS MCP** | Fetches the latest price for a ticker (e.g. `AAPL`, `RELIANCE.NS`) | `stock_MCP.py` |
-| **YT_CMNTS MCP** | Downloads up to 200 YouTube comments from a video URL | `YT_cmnts_MCP.py` |
-| **Chatbot** | LangGraph chatbot that can call the above tools on demand | `chatbot.py` |
-
-The demo shows a user asking the chatbot for a YouTube video link and getting a summary of the product’s pros/cons based on real comments.
-
----
-
-## ⚙️ Prerequisites
-
-| Item | Version | Install |
-|------|---------|---------|
-| Python | 3.11+ | `python -m venv .venv && source .venv/bin/activate` |
-| pip | – | `pip install --upgrade pip` |
-| Git | – | `git clone https://github.com/ajayn3300/MCP-servers-with-Langgraph.git` |
-
-> **Note**: The code uses `mcp`, `langgraph`, `langchain_groq`, `youtube-comment-downloader`, `yfinance`, and `python-dotenv`.  
-> All dependencies are listed below.
-
----
-
-## 📦 Installation
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/ajayn3300/MCP-servers-with-Langgraph.git
-cd MCP-servers-with-Langgraph
-
-# 2. Create a virtual environment (recommended)
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-```
-
-If you don’t have a `requirements.txt` yet, create one with:
-
-```text
-python-dotenv
-yfinance
-langchain-groq
-langgraph
-mcp
-youtube-comment-downloader
-```
-
----
-
-## ⚡️ Running the Demo
-
-### 1️⃣ Set Up Environment Variables
-
-Create a `.env` file in the repo root:
-
-```dotenv
-GROQ_API_KEY=your_groq_api_key_here
-```
-
-> The chatbot uses `langchain_groq.ChatGroq` which requires a Groq API key.
-
-### 2️⃣ Start the Chatbot
-
-The chatbot will automatically spawn both MCP servers as subprocesses (using `stdio` transport).
-
-```bash
-python chatbot.py
-```
-
-You should see output similar to:
-
-```text
-Chatbot: ...
-```
-
-### 3️⃣ Example Interaction
-
-The demo code already contains an example call:
-
-```python
-res = await chatbot.ainvoke({
-    'messages': HumanMessage(
-        'this is the youtube video link of a product, tell me all the goods and bads about this product,  what peoples are saying by reading the comments on this video link : https://www.youtube.com/watch?v=h3M9phIriT4 '
-    )
-})
-print(res['messages'][-1].content)
-```
-
-The chatbot will:
-
-1. Detect that the user wants to fetch YouTube comments.  
-2. Call the `yt_cmnt_downloader` tool.  
-3. Pass the comments to the LLM.  
-4. Return a summarized answer.
-
----
-
-## 🧩 Architecture
-
-```
-┌───────────────────────┐
-│  LangGraph Chatbot    │
-│  ├─ chat_node          │
-│  ├─ tool_node          │
-│  └─ conditional edges │
-└────────────┬──────────┘
-             │
-             ▼
-┌───────────────────────┐
-│  MCP Client (multi‑server) │
-│  ├─ STOCKS server (stdio)  │
-│  └─ YT_CMNTS server (stdio)│
-└───────────────────────┘
-```
-
-- **MCP Servers** expose Python functions as *tools* that can be invoked by the LLM.  
-- **LangGraph** orchestrates the flow:  
-  - `chat_node` runs the LLM.  
-  - `tools_condition` decides whether a tool call is needed.  
-  - `ToolNode` executes the tool and returns the result.  
-- The **client** (`MultiServerMCPClient`) manages connections to each server via `stdio`.
-
----
-
-## 🛠️ Libraries & Tools
-
-| Library | Purpose |
-|---------|---------|
-| `mcp.server.fastmcp` | Lightweight server implementation for exposing tools |
-| `langchain_groq.ChatGroq` | Groq LLM wrapper |
-| `langgraph` | Graph‑based orchestration of LLM and tools |
-| `youtube-comment-downloader` | Fetch YouTube comments |
-| `yfinance` | Retrieve stock market data |
-| `python-dotenv` | Load environment variables |
-
----
-
-## 📄 File Breakdown
-
-### `stock_MCP.py`
-
-```python
-from mcp.server.fastmcp import FastMCP
-import yfinance as yf
-
-mcp = FastMCP('STOCKS')
-
-@mcp.tool()
-def get_stock_price(ticker: str) -> float | None:
-    """Fetches the latest closing/current market price for a given ticker symbol."""
-    try:
-        stock = yf.Ticker(ticker)
-        data = stock.history(period="1d")
-        if not data.empty:
-            return round(data['Close'].iloc[-1], 2)
-        info = stock.info
-        price = info.get("regularMarketPrice") or info.get("currentPrice")
-        return round(price, 2) if price else None
-    except Exception as e:
-        print(f"Error fetching data for {ticker}: {e}")
-        return None
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")
-```
-
-- Exposes `get_stock_price` as a tool.  
-- Uses `yfinance` to fetch data.
-
-### `YT_cmnts_MCP.py`
-
-```python
-from youtube_comment_downloader import YoutubeCommentDownloader
-from itertools import islice
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP('YT_CMNTS')
-
-@mcp.tool()
-def yt_cmnt_downloader(link: str) -> list:
-    """Takes a YouTube link and returns up to 200 comments."""
-    downloader = YoutubeCommentDownloader()
-    comments = downloader.get_comments_from_url(link)
-    comments = [c['text'] for c in islice(comments, 200)]
-    return comments
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")
-```
-
-- Exposes
-PS D:\WORK\MCP> & C:\Users\ajayn\AppData\Local\Programs\Python\Python311\python.exe d:/WORK/MCP/chatbot.py
-# MCP‑Servers‑with‑Langgraph
-
-**A minimal, modular example that shows how to stitch together multiple
-[MCP](https://github.com/mcp-llm/mcp) servers with a single
-LangGraph chatbot.**  
-The project demonstrates how to expose custom Python functions as
-tools, discover them automatically, and let a language model decide
-when to call them.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Project Structure](#project-structure)
-- [Architecture](#architecture)
-- [Dependencies](#dependencies)
-- [Setup](#setup)
-- [Running the MCP Servers](#running-the-mcp-servers)
-- [Using the Chatbot](#using-the-chatbot)
-- [Extending the System](#extending-the-system)
-- [Contributing](#contributing)
-- [License](#license)
-
----
-
-## Overview
-
-The repository contains:
-
-| File | Purpose |
-|------|---------|
-| `stock_MCP.py` | MCP server exposing a single tool that fetches the latest price for a ticker symbol using `yfinance`. |
-| `YT_cmnts_MCP.py` | MCP server exposing a single tool that downloads up to 200 comments from a YouTube video using `youtube_comment_downloader`. |
-| `chatbot.py` | A LangGraph chatbot that automatically discovers the two tools via `MultiServerMCPClient`, binds them to a Groq‑powered LLM, and routes user messages to the appropriate tool when needed. |
-| `.env` (not committed) | Stores the Groq API key (`GROQ_API_KEY`) and any other secrets. |
-
-The goal is to show how a single chatbot can orchestrate multiple
-independent services without hard‑coding any tool logic into the
-graph.
-
----
-
-## Project Structure
-
-```
-MCP-servers-with-Langgraph/
-├─ chatbot.py            # LangGraph chatbot + tool discovery
-├─ stock_MCP.py          # MCP server: get_stock_price
-├─ YT_cmnts_MCP.py       # MCP server: yt_cmnt_downloader
-├─ requirements.txt      # Python dependencies
-├─ .env.example          # Example environment file
-└─ README.md
-```
-
----
-
-## Architecture
-
-1. **MCP Servers**  
-   Each server runs a lightweight HTTP‑style interface via `FastMCP`.  
-   * `stock_MCP.py` exposes `get_stock_price(ticker)`.  
-   * `YT_cmnts_MCP.py` exposes `yt_cmnt_downloader(link)`.  
-   The servers are started as separate processes and communicate over
-   standard I/O.
-
-2. **Tool Discovery**  
-   `MultiServerMCPClient` connects to all servers listed in the
-   configuration dictionary.  
-   It queries each server for its available tools and builds a
-   dictionary of callable wrappers.
-
-3. **LangGraph**  
-   * The graph contains two nodes: `chat` (LLM) and `tools` (ToolNode).  
-   * `chat` calls the LLM with the conversation history.  
-   * `tools_condition` decides if the LLM wants to invoke a tool; if so,
-     control jumps to the `tools` node.  
-   * After a tool finishes, control returns to `chat`.  
-   * The process ends when the LLM produces a final answer.
-
-4. **LLM**  
-   The chatbot uses the Groq `openai/gpt-oss-20b` model via
-   `langchain_groq.ChatGroq`.  The model is bound to the discovered
-   tools so that it can produce function calls in its responses.
-
----
-
-## Dependencies
-
-The project relies on the following Python packages:
-
-- `langchain-core`, `langchain-groq`, `langgraph`
-- `mcp-llm/mcp` (the MCP framework)
-- `yfinance` (stock price retrieval)
-- `youtube_comment_downloader` (YouTube comments)
-- `python-dotenv` (environment variables)
-
-Install them with:
-
-```bash
-pip install -r requirements.txt
-```
-
-Make sure the `requirements.txt` contains the exact versions used in
-the original repository.
-
----
-
-## Setup
-
-1. **Clone the repo**
+# MCP‑servers‑with‑LangGraph  
+
+A **multi‑tool chatbot** built on **LangGraph** that can dynamically discover and invoke remote tools (MCP servers) for stock prices, YouTube comments, and GitHub repository analysis.  
+The repository demonstrates how to expose Python functions as **MCP (Multi‑Client‑Protocol) servers**, aggregate their tool specifications with **`MultiServerMCPClient`**, and wire everything together in a LangGraph state‑machine.
+
+---  
+
+## Table of Contents  
+
+1. [Project Overview](#project-overview)  
+2. [Key Features](#key-features)  
+3. [Architecture & Data Flow](#architecture--data-flow)  
+4. [Repository Walk‑through](#repository-walk-through)  
+   - [stock_MCP.py](#stock_mcppy)  
+   - [YT_cmnts_MCP.py](#yt_cmnts_mcppy)  
+   - [github_MCP.py](#github_mcppy)  
+   - [chatbot.py](#chatbotpy)  
+5. [Setup & Installation](#setup--installation)  
+6. [Running the Chatbot](#running-the-chatbot)  
+7. [Extending the System](#extending-the-system)  
+8. [Environment Variables](#environment-variables)  
+9. [Contributing](#contributing)  
+10. [License](#license)  
+
+---  
+
+## Project Overview  
+
+The goal is to showcase a **plug‑and‑play** approach where **independent Python services** expose functions via the **MCP protocol**.  
+A central LangGraph‑based chatbot queries these services at runtime, automatically binding the discovered tools to the LLM.  
+The example includes three concrete tools:
+
+| Service | Purpose | Remote Function |
+|---------|---------|-----------------|
+| **STOCKS** | Retrieve the latest market price for a ticker symbol | `get_stock_price(ticker: str) → float | None` |
+| **YT_CMNTS** | Pull up to 250 comments from a YouTube video | `yt_cmnt_downloader(link: str) → List[str]` |
+| **GITHUB** | Extract all Python‑related files from a public GitHub repo | `extract_content(repo_link: str) → Dict[str, str]` |
+
+The chatbot can call any of these tools without hard‑coding their signatures; it discovers them via the **MCP client**.
+
+---  
+
+## Key Features  
+
+- **Dynamic tool discovery** – `MultiServerMCPClient.get_tools()` fetches OpenAPI‑style tool specs from each MCP server at startup.  
+- **LangGraph state‑machine** – Handles LLM messages, tool calls, and conditional routing automatically.  
+- **Standard‑IO transport** – MCP servers run as lightweight subprocesses communicating over stdin/stdout, no extra networking required.  
+- **Extensible design** – Adding a new MCP server only requires creating a `FastMCP` instance and decorating the function with `@mcp.tool()`.  
+- **Secure secrets handling** – API keys are loaded from a `.env` file using `python-dotenv`.  
+
+---  
+
+## Architecture & Data Flow  
+
+1. **MCP Servers** (`stock_MCP.py`, `YT_cmnts_MCP.py`, `github_MCP.py`)  
+   - Each server creates a `FastMCP` instance, decorates a function with `@mcp.tool()`, and runs `mcp.run(transport="stdio")`.  
+   - The server automatically exposes the function’s signature as a JSON‑RPC‑compatible tool definition.  
+
+2. **Client (chatbot.py)**  
+   - Instantiates a `MultiServerMCPClient` with a mapping of service names → command line to launch the corresponding server.  
+   - Calls `client.get_tools()` to collect all tool specifications.  
+   - Binds the tools to a Groq LLM (`ChatGroq`) using `llm.bind_tools(tools)`.  
+
+3. **LangGraph Graph**  
+   - **Nodes**:  
+     - `chat` – Sends the user message to the LLM and receives a response (which may contain a tool call).  
+     - `tools` – Executes the requested tool via `ToolNode`.  
+   - **Edges**:  
+     - START → `chat`  
+     - Conditional edge from `chat` to either `tools` (if a tool call is present) or END.  
+     - `tools` → `chat` (to feed the tool result back into the conversation).  
+
+4. **Execution**  
+   - The chatbot receives a user query, the LLM decides whether a tool is needed, LangGraph routes the request, the appropriate MCP server runs the function, the result is returned to the LLM, and the final answer is printed.  
+
+---  
+
+## Repository Walk‑through  
+
+### `stock_MCP.py`  
+
+- **Purpose**: Provides a single tool `get_stock_price` that returns the latest closing price for a given ticker symbol.  
+- **Key Libraries**:  
+  - `yfinance` – Simple interface to Yahoo Finance for historic and real‑time data.  
+  - `mcp.server.fastmcp.FastMCP` – Core MCP server class.  
+- **Logic Summary**:  
+  1. Instantiate `FastMCP` with the service name **STOCKS**.  
+  2. Decorate `get_stock_price` with `@mcp.tool()`.  
+  3. Inside the function, attempt to fetch a 1‑day price history; if unavailable, fall back to `stock.info`.  
+  4. Return the price rounded to two decimals, or `None` on error.  
+
+### `YT_cmnts_MCP.py`  
+
+- **Purpose**: Exposes `yt_cmnt_downloader` that fetches up to 250 comments from a YouTube video URL.  
+- **Key Libraries**:  
+  - `youtube_comment_downloader.YoutubeCommentDownloader` – Handles pagination and comment extraction.  
+  - `itertools.islice` – Limits the result set to 250 items.  
+  - `FastMCP` – Same MCP server base.  
+- **Logic Summary**:  
+  1. Create a `FastMCP` instance named **YT_CMNTS**.  
+  2. Decorate the downloader function.  
+  3. Use the downloader to stream comments, slice the first 250, and return a list of comment texts.  
+
+### `github_MCP.py`  
+
+- **Purpose**: Supplies `extract_content` which returns a dictionary mapping Python‑related file names to their source code for any public GitHub repository.  
+- **Key Libraries**:  
+  - `PyGithub` (`github.Github`, `github.Auth`) – Authenticated GitHub API client.  
+  - `python-dotenv` – Loads `GITHUB_API_KEY` from `.env`.  
+  - `FastMCP` – MCP server implementation.  
+- **Logic Summary**:  
+  1. Load the GitHub personal access token from environment.  
+  2. Strip the base URL from the provided repo link to obtain `owner/repo`.  
+  3. Use the token to instantiate an authenticated `Github` object.  
+  4. Retrieve the repository, list root‑level contents, filter for `.py` and `.ipynb` files.  
+  5. Decode each file’s content and assemble a `{filename: source}` dictionary.  
+
+### `chatbot.py`  
+
+- **Purpose**: Orchestrates the multi‑tool chatbot using LangGraph and the MCP client.  
+- **Key Libraries**:  
+  - `langchain_groq.ChatGroq` – LLM wrapper for Groq’s open‑source 20B model.  
+  - `langgraph` – Graph‑based agent framework (`StateGraph`, `ToolNode`, `tools_condition`).  
+  - `langchain_core` – Types for messages and tools.  
+  - `langchain_mcp_adapters.client.MultiServerMCPClient` – Handles launching and communicating with multiple MCP servers.  
+  - `dotenv` – Loads environment variables.  
+  - `asyncio` – Runs the asynchronous graph.  
+- **Workflow Summary**:  
+  1. Load environment variables (`.env`).  
+  2. Define the LLM (`ChatGroq`).  
+  3. Build a `MultiServerMCPClient` with three entries, each pointing to the Python executable and the respective MCP script.  
+  4. In `build_graph()`, retrieve the remote tool specs via `client.get_tools()`, bind them to the LLM, and construct a LangGraph with a chat node and a tool node.  
+  5. `main()` builds the graph, sends a user message (the original request for a README), and prints the final LLM response.  
+
+---  
+
+## Setup & Installation  
+
+1. **Clone the repository**  
 
    ```bash
    git clone https://github.com/ajayn3300/MCP-servers-with-Langgraph.git
    cd MCP-servers-with-Langgraph
    ```
 
-2. **Create a `.env` file**
-
-   Copy the example file and fill in your Groq API key:
+2. **Create a virtual environment** (recommended)  
 
    ```bash
-   cp .env.example .env
+   python -m venv .venv
+   source .venv/bin/activate   # on Windows: .venv\Scripts\activate
    ```
 
-   Edit `.env` and add:
+3. **Install dependencies**  
 
-   ```
-   GROQ_API_KEY=your_key_here
-   ```
-
-3. **Verify the Python executable paths**
-
-   `chatbot.py` contains hard‑coded paths to the Python interpreter and
-   the server scripts.  Update them to match your environment if
-   necessary.  The dictionary passed to `MultiServerMCPClient` looks
-   like:
-
-   ```python
-   {
-       'STOCKS': {'transport': 'stdio', 'command': 'python', 'args': ['stock_MCP.py']},
-       'YT_CMNTS': {'transport': 'stdio', 'command': 'python', 'args': ['YT_cmnts_MCP.py']}
-   }
+   ```bash
+   pip install -r requirements.txt
    ```
 
-   Adjust the `command` and `args` if you use a virtual environment or a
-   different interpreter.
+   *If a `requirements.txt` is not present, the core packages are:*  
 
----
+   - `python-dotenv`  
+   - `yfinance`  
+   - `langchain-groq`  
+   - `langgraph`  
+   - `langchain-core`  
+   - `langchain-mcp-adapters`  
+   - `youtube-comment-downloader`  
+   - `PyGithub`  
+   - `mcp` (the MCP library providing `FastMCP`)  
 
-## Running the MCP Servers
+4. **Configure secrets**  
 
-The servers are started automatically by `chatbot.py` via the
-`MultiServerMCPClient`.  If you want to run them manually:
+   Create a `.env` file in the project root with:  
 
-```bash
-# In one terminal
-python stock_MCP.py
+   ```
+   GITHUB_API_KEY=your_github_pat_here
+   ```
 
-# In another terminal
-python YT_cmnts_MCP.py
-```
+   The Groq model does **not** require an API key for the open‑source endpoint, but if you switch to a hosted provider, add the appropriate key (e.g., `GROQ_API_KEY`).  
 
-Both servers will listen on `stdio` and expose their tools
-automatically.
+---  
 
----
+## Running the Chatbot  
 
-## Using the Chatbot
-
-Run the chatbot with:
+The chatbot launches the three MCP servers as subprocesses and then starts the LangGraph agent.
 
 ```bash
 python chatbot.py
 ```
 
-You will see a prompt where you can type any natural‑language query.
-Examples:
+You will see the final answer printed to the console.  
+The system can be used interactively by replacing the hard‑coded `HumanMessage` in `chatbot.py` with a loop that reads from `stdin`.  
 
-- **Stock price**
+---  
 
-  ```
-  What is the current price of AAPL?
-  ```
+## Extending the System  
 
-- **YouTube comments**
+### Adding a New MCP Service  
 
-  ```
-  Show me comments on this video: https://www.youtube.com/watch?v=h3M9phIriT4
-  ```
+1. **Create a new Python script** (e.g., `weather_MCP.py`).  
+2. Instantiate `FastMCP` with a unique service name.  
+3. Decorate each function you want to expose with `@mcp.tool()`.  
+4. Ensure the script ends with `mcp.run(transport="stdio")`.  
 
-The LLM will decide whether to call a tool.  When a tool is invoked,
-its output is appended to the conversation and the LLM continues
-generating a response that incorporates the tool’s result.
+```python
+# skeleton
+from mcp.server.fastmcp import FastMCP
 
----
+mcp = FastMCP('WEATHER')
 
-## Extending the System
+@mcp.tool()
+def get_current_weather(city: str) -> str:
+    ...
 
-1. **Add a new MCP server**  
-   - Create a new `.py` file that imports `FastMCP`.  
-   - Decorate any function you want to expose with `@mcp.tool()`.  
-   - Start the server with `mcp.run(transport="stdio")`.
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+```
 
-2. **Register the server in `chatbot.py`**  
-   - Update the dictionary passed to `MultiServerMCPClient`.  
-   - Ensure the `command` and `args` point to the new server script.
+5. **Register the service** in `chatbot.py` by adding an entry to the `MultiServerMCPClient` dictionary, pointing to the new script.  
 
-3. **Optional – Custom Prompt**  
-   The system prompt is currently hard‑coded in the graph.  To modify
-   it, edit the `SystemMessage` used when initializing the LLM.
+6. **Restart the chatbot** – the new tool will be discovered automatically.  
 
-4. **Add more tools to an existing server**  
-   Simply add more `@mcp.tool()` decorated functions; the client will
-   discover them automatically.
+### Customising the Graph  
 
----
+- To change routing logic, modify `build_graph()` – add more nodes, change edge conditions, or incorporate memory savers (`MemorySaver`).  
+- For persistent state across sessions, replace the in‑memory graph with a checkpoint‑backed version (`MemorySaver` + `SQLiteCheckpoint`).  
 
-## Contributing
+---  
 
-Pull requests are welcome!  
-Please follow these guidelines:
+## Environment Variables  
 
-1. Create a feature branch from `main`.  
-2. Add tests for any new functionality.  
-3. Ensure `flake8` and `black` pass.  
-4. Update the README if you add new tools or change the architecture.
+| Variable | Description | Required by |
+|----------|-------------|-------------|
+| `GITHUB_API_KEY` | Personal Access Token with `repo` scope for reading public repos. | `github_MCP.py` |
+| `GROQ_API_KEY` (optional) | API key for Groq hosted endpoints. | `chatbot.py` if using a non‑open model |
+| `PYTHONPATH` (optional) | If you install the MCP library locally, ensure it’s on the path. | All scripts |
+
+---  
+
+## Contributing  
+
+Contributions are welcome! Please follow these steps:
+
+1. Fork the repository.  
+2. Create a feature branch (`git checkout -b feature/your‑feature`).  
+3. Install the development dependencies (`pip install -r requirements-dev.txt` if provided).  
+4. Write tests for new functionality (use `pytest`).  
+5. Ensure all existing tests pass (`pytest`).  
+6. Submit a Pull Request with a clear description of the changes.  
+
+When adding new MCP services, include a short description in this README under **Repository Walk‑through**.
 
 ---
